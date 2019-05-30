@@ -28,7 +28,7 @@ func (s *prepStmt) Close() error {
 }
 
 func (s *prepStmt) NumInput() int {
-	return -1
+	return s.stmts[0].NumInput()
 }
 
 func (s *prepStmt) Exec(args []driver.Value) (driver.Result, error) {
@@ -37,21 +37,44 @@ func (s *prepStmt) Exec(args []driver.Value) (driver.Result, error) {
 
 func (s *prepStmt) Query(args []driver.Value) (driver.Rows, error) {
 	smt := s.stmts[s.dvr.nextSlaveNum()+1]
-	if queryer, ok := smt.(driver.StmtQueryContext); ok {
-		return queryer.QueryContext(args)
+	return smt.Query(args)
+}
+
+func (s *prepStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
+	smt := s.stmts[0]
+	if execer, ok := smt.(driver.StmtExecContext); ok {
+		return execer.ExecContext(ctx, args)
 	}
 
-	return nil, driver.ErrSkip
-}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 
-func (s *prepStmt) ExecContext(ctx context.Context, args []driver.Value) (driver.Result, error) {
-	return s.stmts[0].ExecContext(ctx, args)
-}
-
-func (s *prepStmt) QueryContext(ctx context.Context, args []driver.Value) (driver.Rows, error) {
-	stmt, err := s.stmts[s.dvr.nextSlaveNum()+1].QueryContext(ctx, args)
+	dargs, err := namedValueToValue(args)
 	if err != nil {
 		return nil, err
 	}
-	return &rows{stmt}, nil
+	return smt.Exec(dargs)
+}
+
+func (s *prepStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
+	smt := s.stmts[s.dvr.nextSlaveNum()+1]
+
+	if queryer, ok := smt.(driver.StmtQueryContext); ok {
+		return queryer.QueryContext(ctx, args)
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	dargs, err := namedValueToValue(args)
+	if err != nil {
+		return nil, err
+	}
+	return smt.Query(dargs)
 }
