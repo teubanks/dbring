@@ -1,9 +1,10 @@
-package msring
+package dbring
 
 import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"strings"
 	"sync/atomic"
 )
@@ -12,13 +13,13 @@ var _ driver.Driver = (*Driver)(nil)
 
 type Driver struct {
 	driverName string
-	masterConn *sql.DB
-	slaveConns []*sql.DB
+	masterConn driver.Conn
+	slaveConns []driver.Conn
 	count      uint64 // Monotonically incrementing counter on each query
 }
 
 func init() {
-	sql.Register("msring", &Driver{})
+	sql.Register("dbring", &Driver{})
 }
 
 func (d *Driver) Open(rawDSNs string) (driver.Conn, error) {
@@ -36,7 +37,7 @@ func (d *Driver) Open(rawDSNs string) (driver.Conn, error) {
 
 // Prepare returns a prepared statement, bound to this connection.
 func (d *Driver) Prepare(query string) (driver.Stmt, error) {
-	stmts := make([]*sql.Stmt, len(d.slaveConns)+1)
+	stmts := make([]driver.Stmt, len(d.slaveConns)+1)
 
 	ps, err := d.masterConn.Prepare(query)
 	if err != nil {
@@ -76,7 +77,7 @@ func (d *Driver) Begin() (driver.Tx, error) {
 	return d.masterConn.Begin()
 }
 
-func (d *Driver) slave() *sql.DB {
+func (d *Driver) slave() driver.Conn {
 	return d.slaveConns[d.nextSlaveNum()]
 }
 
@@ -86,17 +87,42 @@ func (d *Driver) nextSlaveNum() int {
 }
 
 func (d *Driver) Query(query string, args []driver.Value) (driver.Rows, error) {
-	res, err := d.slave().Query(query, args)
-	if err != nil {
-		return nil, err
+	dbExecer := d.slave()
+	if queryer, ok := dbExecer.(driver.Queryer); ok {
+		return queryer.Query(query, args)
 	}
-	return &rows{res}, nil
+	return nil, driver.ErrSkip
 }
 
 func (d *Driver) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	res, err := d.slave().QueryContext(ctx, query, args)
+	dbExecer := d.slave()
+	if queryerContext, ok := dbExecer.(driver.QueryerContext); ok {
+		rows, err := queryerContext.QueryContext(ctx, query, args)
+		return rows, err
+	}
+
+	dargs, err := namedValueToValue(args)
 	if err != nil {
 		return nil, err
 	}
-	return &rows{res}, nil
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	return d.Query(query, dargs)
+}
+
+// copied from stdlib database/sql package: src/database/sql/ctxutil.go
+func namedValueToValue(named []driver.NamedValue) ([]driver.Value, error) {
+	dargs := make([]driver.Value, len(named))
+	for n, param := range named {
+		if len(param.Name) > 0 {
+			return nil, errors.New("sql: driver does not support the use of Named Parameters")
+		}
+		dargs[n] = param.Value
+	}
+	return dargs, nil
 }

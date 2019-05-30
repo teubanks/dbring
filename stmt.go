@@ -1,16 +1,16 @@
-package msring
+package dbring
 
 import (
 	"context"
-	"database/sql"
 	"database/sql/driver"
 )
 
 // prepStmt is a prepared statement that conforms to the driver.Stmt interface.
 //
 type prepStmt struct {
+	// dvr gives us access to the db connections
 	dvr   *Driver
-	stmts []*sql.Stmt
+	stmts []driver.Stmt
 }
 
 // Close closes the statement.
@@ -36,11 +36,12 @@ func (s *prepStmt) Exec(args []driver.Value) (driver.Result, error) {
 }
 
 func (s *prepStmt) Query(args []driver.Value) (driver.Rows, error) {
-	stmt, err := s.stmts[s.dvr.nextSlaveNum()+1].Query(args)
-	if err != nil {
-		return nil, err
+	smt := s.stmts[s.dvr.nextSlaveNum()+1]
+	if queryer, ok := smt.(driver.StmtQueryContext); ok {
+		return queryer.QueryContext(args)
 	}
-	return &rows{stmt}, nil
+
+	return nil, driver.ErrSkip
 }
 
 func (s *prepStmt) ExecContext(ctx context.Context, args []driver.Value) (driver.Result, error) {

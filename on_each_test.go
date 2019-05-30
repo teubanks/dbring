@@ -1,4 +1,4 @@
-package msring
+package dbring
 
 import (
 	"fmt"

@@ -1,4 +1,4 @@
-package msring
+package dbring
 
 func onEach(n int, fn func(i int) error) error {
 	errors := make(chan error, n)
