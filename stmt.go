@@ -1,6 +1,7 @@
 package msring
 
 import (
+	"context"
 	"database/sql"
 	"database/sql/driver"
 )
@@ -26,10 +27,30 @@ func (s *prepStmt) Close() error {
 	return err
 }
 
+func (s *prepStmt) NumInput() int {
+	return -1
+}
+
 func (s *prepStmt) Exec(args []driver.Value) (driver.Result, error) {
 	return s.stmts[0].Exec(args)
 }
 
 func (s *prepStmt) Query(args []driver.Value) (driver.Rows, error) {
-	return s.stmts[s.dvr.nextSlaveNum()+1].Query(args)
+	stmt, err := s.stmts[s.dvr.nextSlaveNum()+1].Query(args)
+	if err != nil {
+		return nil, err
+	}
+	return &rows{stmt}, nil
+}
+
+func (s *prepStmt) ExecContext(ctx context.Context, args []driver.Value) (driver.Result, error) {
+	return s.stmts[0].ExecContext(ctx, args)
+}
+
+func (s *prepStmt) QueryContext(ctx context.Context, args []driver.Value) (driver.Rows, error) {
+	stmt, err := s.stmts[s.dvr.nextSlaveNum()+1].QueryContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	return &rows{stmt}, nil
 }

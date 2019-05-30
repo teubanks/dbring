@@ -1,6 +1,7 @@
 package msring
 
 import (
+	"context"
 	"database/sql"
 	"database/sql/driver"
 	"strings"
@@ -82,4 +83,20 @@ func (d *Driver) slave() *sql.DB {
 // slaveNum round-robins through the slaves and picks the next one
 func (d *Driver) nextSlaveNum() int {
 	return int((atomic.AddUint64(&d.count, 1) % uint64(len(d.slaveConns)-1)))
+}
+
+func (d *Driver) Query(query string, args []driver.Value) (driver.Rows, error) {
+	res, err := d.slave().Query(query, args)
+	if err != nil {
+		return nil, err
+	}
+	return &rows{res}, nil
+}
+
+func (d *Driver) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	res, err := d.slave().QueryContext(ctx, query, args)
+	if err != nil {
+		return nil, err
+	}
+	return &rows{res}, nil
 }
