@@ -12,14 +12,20 @@ import (
 var _ driver.Driver = (*Driver)(nil)
 
 type Driver struct {
-	driverName string
-	masterConn driver.Conn
-	slaveConns []driver.Conn
-	count      uint64 // Monotonically incrementing counter on each query
+	internalDriver driver.Driver
+	masterConn     driver.Conn
+	slaveConns     []driver.Conn
+	count          uint64 // Monotonically incrementing counter on each query
 }
 
-func init() {
-	sql.Register("dbring", &Driver{})
+func (d *Driver) SetDriver(drv driver.Driver) {
+	d.internalDriver = drv
+}
+
+func Register(name string, internalDriver driver.Driver) {
+	sql.Register(name, &Driver{
+		internalDriver: internalDriver,
+	})
 }
 
 func (d *Driver) Open(rawDSNs string) (driver.Conn, error) {
@@ -28,7 +34,7 @@ func (d *Driver) Open(rawDSNs string) (driver.Conn, error) {
 	masterDSN := dsns[0]
 
 	var err error
-	d.masterConn, err = sql.Open(d.driverName, masterDSN)
+	d.masterConn, err = d.internalDriver.Open(masterDSN)
 	if err != nil {
 		return nil, err
 	}
@@ -78,6 +84,9 @@ func (d *Driver) Begin() (driver.Tx, error) {
 }
 
 func (d *Driver) slave() driver.Conn {
+	if len(d.slaveConns) == 0 {
+		return d.masterConn
+	}
 	return d.slaveConns[d.nextSlaveNum()]
 }
 

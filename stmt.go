@@ -18,9 +18,8 @@ type prepStmt struct {
 // As of Go 1.1, a Stmt will not be closed if it's in use
 // by any queries.
 func (s *prepStmt) Close() error {
-	s.dvr.masterConn.Close()
-	err := onEach(len(s.dvr.slaveConns), func(i int) error {
-		err := s.dvr.slaveConns[i].Close()
+	err := onEach(len(s.stmts), func(i int) error {
+		err := s.stmts[i].Close()
 		return err
 	})
 
@@ -36,7 +35,12 @@ func (s *prepStmt) Exec(args []driver.Value) (driver.Result, error) {
 }
 
 func (s *prepStmt) Query(args []driver.Value) (driver.Rows, error) {
-	smt := s.stmts[s.dvr.nextSlaveNum()+1]
+	var smt driver.Stmt
+	if len(s.stmts) == 1 {
+		smt = s.stmts[0]
+	} else {
+		smt = s.stmts[s.dvr.nextSlaveNum()+1]
+	}
 	return smt.Query(args)
 }
 
@@ -56,7 +60,8 @@ func (s *prepStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (d
 	if err != nil {
 		return nil, err
 	}
-	return smt.Exec(dargs)
+	res, err := smt.Exec(dargs)
+	return res, err
 }
 
 func (s *prepStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
